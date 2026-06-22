@@ -1,0 +1,86 @@
+---
+# ============================================================================
+# Projet CYNA - Playbook Wazuh Agent
+# Fichier : ansible/wazuh-agent.yml
+# Objet   : Installation et configuration des agents Wazuh sur serveurs Linux
+# Cible   : groupe [wazuh_agents] dans inventory.ini
+# ============================================================================
+
+- name: Installation des agents Wazuh CYNA
+  hosts: wazuh_agents
+  become: true
+
+  vars:
+    # Adresse du Wazuh Manager dans le lab CYNA.
+    # A adapter si l'adresse du serveur Wazuh change.
+    wazuh_manager_ip: "10.0.20.3"
+    wazuh_repo_key_url: "https://packages.wazuh.com/key/GPG-KEY-WAZUH"
+    wazuh_repo: "deb https://packages.wazuh.com/4.x/apt/ stable main"
+
+  tasks:
+    - name: Mettre à jour le cache APT
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Installer les dépendances nécessaires
+      ansible.builtin.apt:
+        name:
+          - curl
+          - gnupg
+          - apt-transport-https
+          - lsb-release
+        state: present
+
+    - name: Ajouter la clé GPG du dépôt Wazuh
+      ansible.builtin.get_url:
+        url: "{{ wazuh_repo_key_url }}"
+        dest: /usr/share/keyrings/wazuh.gpg
+        mode: "0644"
+
+    - name: Ajouter le dépôt Wazuh
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/wazuh.list
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main
+
+    - name: Mettre à jour le cache APT après ajout du dépôt Wazuh
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Installer l'agent Wazuh avec le manager CYNA
+      ansible.builtin.shell: |
+        WAZUH_MANAGER="{{ wazuh_manager_ip }}" WAZUH_AGENT_NAME="{{ inventory_hostname }}" apt-get install -y wazuh-agent
+      args:
+        creates: /var/ossec/bin/wazuh-control
+
+    - name: Configurer l'adresse du Wazuh Manager dans ossec.conf
+      ansible.builtin.replace:
+        path: /var/ossec/etc/ossec.conf
+        regexp: '<address>.*</address>'
+        replace: '<address>{{ wazuh_manager_ip }}</address>'
+      notify: Redémarrer wazuh-agent
+
+    - name: Démarrer et activer l'agent Wazuh
+      ansible.builtin.service:
+        name: wazuh-agent
+        state: started
+        enabled: true
+
+    - name: Vérifier l'état de l'agent Wazuh
+      ansible.builtin.command: /var/ossec/bin/wazuh-control status
+      changed_when: false
+      register: wazuh_status
+
+    - name: Afficher l'état de l'agent Wazuh
+      ansible.builtin.debug:
+        var: wazuh_status.stdout_lines
+
+  handlers:
+    - name: Redémarrer wazuh-agent
+      ansible.builtin.service:
+        name: wazuh-agent
+        state: restarted
