@@ -1,0 +1,121 @@
+---
+# ============================================================================
+# Projet CYNA - Playbook Web
+# Fichier : ansible/web.yml
+# Objet   : Installation et configuration d'un serveur Web Nginx en DMZ
+# Cible   : groupe [web] dans inventory.ini
+# ============================================================================
+
+- name: Configuration du serveur Web CYNA
+  hosts: web
+  become: true
+
+  vars:
+    web_root: /var/www/html
+    nginx_site_name: cyna-web
+    nginx_listen_port: 80
+
+  tasks:
+    - name: Mettre à jour le cache APT
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Installer Nginx et les outils de diagnostic
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - curl
+        state: present
+
+    - name: Créer le dossier du site Web
+      ansible.builtin.file:
+        path: "{{ web_root }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    - name: Déployer la page d'accueil CYNA
+      ansible.builtin.copy:
+        dest: "{{ web_root }}/index.html"
+        owner: www-data
+        group: www-data
+        mode: "0644"
+        content: |
+          <!doctype html>
+          <html lang="fr">
+          <head>
+            <meta charset="utf-8">
+            <title>CYNA - Web DMZ</title>
+          </head>
+          <body>
+            <h1>CYNA - Service Web DMZ</h1>
+            <p>Serveur Web déployé et configuré avec Ansible.</p>
+          </body>
+          </html>
+
+    - name: Ajouter les en-têtes HTTP de durcissement
+      ansible.builtin.copy:
+        dest: /etc/nginx/snippets/cyna-security-headers.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "DENY" always;
+          add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+          add_header Content-Security-Policy "default-src 'self'; frame-ancestors 'none';" always;
+      notify: Redémarrer Nginx
+
+    - name: Configurer le virtual host Nginx CYNA
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/{{ nginx_site_name }}
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          server {
+              listen {{ nginx_listen_port }} default_server;
+              listen [::]:{{ nginx_listen_port }} default_server;
+
+              server_name _;
+              root {{ web_root }};
+              index index.html;
+
+              include snippets/cyna-security-headers.conf;
+
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+          }
+      notify: Redémarrer Nginx
+
+    - name: Activer le site CYNA
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/{{ nginx_site_name }}
+        dest: /etc/nginx/sites-enabled/{{ nginx_site_name }}
+        state: link
+      notify: Redémarrer Nginx
+
+    - name: Désactiver le site par défaut Nginx
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Redémarrer Nginx
+
+    - name: Vérifier la syntaxe Nginx
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: Démarrer et activer Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Redémarrer Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted

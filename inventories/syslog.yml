@@ -1,0 +1,73 @@
+---
+# ============================================================================
+# Projet CYNA - Playbook Syslog
+# Fichier : ansible/syslog.yml
+# Objet   : Configuration d'un serveur Syslog centralisé avec rsyslog
+# Cible   : groupe [syslog] dans inventory.ini
+# ============================================================================
+
+- name: Configuration du serveur Syslog CYNA
+  hosts: syslog
+  become: true
+
+  vars:
+    syslog_storage_dir: /var/log/cyna
+    syslog_udp_port: 514
+    syslog_tcp_port: 514
+
+  tasks:
+    - name: Mettre à jour le cache APT
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Installer rsyslog
+      ansible.builtin.apt:
+        name: rsyslog
+        state: present
+
+    - name: Créer le dossier de stockage des journaux CYNA
+      ansible.builtin.file:
+        path: "{{ syslog_storage_dir }}"
+        state: directory
+        owner: syslog
+        group: adm
+        mode: "0750"
+
+    - name: Configurer la réception Syslog UDP et TCP
+      ansible.builtin.copy:
+        dest: /etc/rsyslog.d/10-cyna-remote.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Réception centralisée des journaux pour le projet CYNA
+          # UDP 514 et TCP 514 pour les serveurs et équipements autorisés par le pare-feu
+
+          module(load="imudp")
+          input(type="imudp" port="{{ syslog_udp_port }}")
+
+          module(load="imtcp")
+          input(type="imtcp" port="{{ syslog_tcp_port }}")
+
+          template(name="CynaRemoteLogs" type="string" string="{{ syslog_storage_dir }}/%HOSTNAME%/%PROGRAMNAME%.log")
+
+          *.* ?CynaRemoteLogs
+          & stop
+      notify: Redémarrer rsyslog
+
+    - name: Vérifier la configuration rsyslog
+      ansible.builtin.command: rsyslogd -N1
+      changed_when: false
+
+    - name: Démarrer et activer rsyslog
+      ansible.builtin.service:
+        name: rsyslog
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Redémarrer rsyslog
+      ansible.builtin.service:
+        name: rsyslog
+        state: restarted

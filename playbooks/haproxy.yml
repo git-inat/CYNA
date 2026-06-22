@@ -1,0 +1,48 @@
+haproxy.yml
+---
+- name: Installer et configurer HAProxy sur le frontal DMZ
+  hosts: haproxy
+  become: true
+
+  tasks:
+    - name: Installer haproxy
+      apt:
+        name: haproxy
+        state: present
+        update_cache: true
+
+    - name: Déployer la configuration HAProxy
+      copy:
+        dest: /etc/haproxy/haproxy.cfg
+        content: |
+          global
+              log /dev/log local0
+              log /dev/log local1 notice
+              daemon
+
+          defaults
+              log global
+              mode http
+              option httplog
+              option dontlognull
+              timeout connect 5000
+              timeout client 50000
+              timeout server 50000
+
+          frontend http_front
+              bind *:80
+              default_backend web_back
+
+          backend web_back
+              balance roundrobin
+              server web1 10.0.30.1:80 check
+              server web2 10.0.30.3:80 check
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Démarrer et activer haproxy
+      service:
+        name: haproxy
+        state: started
+        enabled: true
